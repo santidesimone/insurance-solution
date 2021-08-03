@@ -1,0 +1,117 @@
+---
+title: Vaccine Order Management
+description: This microservice manage order for vaccine
+---
+
+This microservice manages vaccine orders for a world wide demand and distribution. This is an example of using [Quarkus](https://quarkus.io), microprofile [Reactive Messaging](https://smallrye.io/smallrye-reactive-messaging/smallrye-reactive-messaging/2/concepts.html), [Debezium outbox quarkus extension](https://debezium.io/documentation/reference/integrations/outbox.html) with Debezium [change data capture  for Postgresl](https://debezium.io/documentation/reference/connectors/postgresql.html) to Kafka. The database is Postgresql, the service uses Hibernate ORM with Panache. 
+
+The DevOps is supported by Git Action and then gitops repository.
+
+
+## Overview
+
+This project implements a very simple event driven microservice to support the Create, Read, Update, of vaccine orders. This implementation highlights the following capabilities and patterns:
+
+* Quarkus reactive microservice using Microprofile 3.x - reactive messaging extension to consume Vaccine lot shipment plans
+* Postgresql with Hibernate ORM with [Quarkus Panache](https://quarkus.io/guides/hibernate-orm-panache)
+* Quarkus Debezium Outbox pattern to get create OrderEvents while writing to the main VaccineOrderEntity table
+* Integrate a Kafka Connector with Debezium change data capture table updates on the OrderEvents table.
+
+In term of business scenario, a sale representative uses his mobile device or web browser to enter information about a vaccine order to be shipped to a given country or a province within a country at given date for a given quantity: 
+
+ ![](./images/order-ui.png)
+
+The user interface is for demonstration purpose only, and illustrates some standard Vuejs / vuetify components. 
+
+The following diagram presents the simple context view of the service deployed on OpenShift, integrated with Kafka, Change data capture and the [Vaccine order reefer optimization service](/solution/orderms/voro-solution/). The integration with this component is using pub/sub via Kafka topics. The integration with Blockchain is not done yet, but it can be seen as the source of truth for the business companies participating to then end to end delivery.  
+
+ ![Deployment view](./images/vaccine-order-1.png)
+
+
+The component writes to the database all the orders received, but also produces records to Kafka via the Outbox pattern and Debezium change data capture.
+
+The Quarkus Debezium outbox pattern is described in [this note](https://debezium.io/documentation/reference/integrations/outbox.html). The configuration used is in the `application.properties`:
+
+```
+quarkus.debezium-outbox.id.name=aggregateid
+quarkus.debezium-outbox.id.column-definition="DECIMAL NOT NULL"
+quarkus.index-dependency.outbox.group-id=io.debezium
+quarkus.debezium-outbox.aggregate-id.name=aggregateid
+quarkus.debezium-outbox.aggregate-id.column-definition="DECIMAL NOT NULL"
+quarkus.index-dependency.outbox.artifact-id=debezium-quarkus-outbox
+quarkus.debezium-outbox.table-name=orderevents
+```
+
+Another view could be a pods view of the solution to deploy. The Debezium change data capture is a Kafka connector.
+
+ ![Pods view](./images/pods-map.png)
+
+**Github repository:** [Vaccine-order-mgr-pg](https://github.com/ibm-cloud-architecture/vaccine-order-mgr-pg)
+
+
+**Kafka topics produced to:** vaccine.public.orderevents
+**Kafka topics consumed from :** vaccine.shipment.plans
+
+**Events produced:**
+
+We will simplify the process and aggregate in the following event types:
+
+* orderCreated
+* orderUpdated
+
+
+The following environment variables are used by the application, and configured via the [src/main/resources/application.properties](https://github.com/ibm-cloud-architecture/vaccine-order-mgr-pg/blob/master/src/main/resources/application.properties).
+
+  ```properties
+  quarkus.openshift.env.configmaps=vaccine-order-ms-cm
+  quarkus.openshift.env.secrets=vaccine-order-secrets
+  quarkus.openshift.env.mapping.KAFKA_SSL_TRUSTSTORE_PASSWORD.from-secret=eda.dev-cluster-ca-cert
+  quarkus.openshift.env.mapping.KAFKA_SSL_TRUSTSTORE_PASSWORD.with-key=ca.password
+  quarkus.openshift.mounts.es-cert.path=/deployments/certs/server
+  quarkus.openshift.secret-volumes.es-cert.secret-name=eda-gse-cluster-ca-cert
+  ```
+
+## Build and deploy to OpenShift
+
+This microservice is built using maven and Quarkus extensions. We have already pushed the last version of this service on dockerhub, if you do not want to build it. 
+
+To build and run locally see the [repository main readme](https://github.com/ibm-cloud-architecture/vaccine-order-mgr-pg) as we have different docker-compose files to run in demonstration mode or in development mode.
+
+To build and deploy to OpenShift, you can follow the step by step instructions in [this scenario](/use-cases/order/).
+
+As an alternate you can use the different scripts from the `vaccine-order-mgr-pg` project:
+
+* Clone the source git repository: `git clone https://github.com/ibm-cloud-architecture/vaccine-order-mgr-pg`
+* Set some environment variables in `./src/main/scripts/setenv.sh` script.
+* Deploy postgresql
+
+  ```shell
+  cd ./src/main/scripts/
+  deployPostgresql.sh
+  ```
+
+In this section we address how to use OpenShift Source to Image to build and deploy the application to OpenShift. The application is using environment variables to access to user, password, URLs to access Postgres and Kafka. We are using Event Streams deployed in Cloud Pak for Integration, but it could work the same with Strimzi. 
+
+As an example we created the OpenShift project called "vaccine" with a command: `oc new-project vaccine`.
+
+### Deploy the application
+
+See readme file in project repository and the [order optimization use case description](/use-cases/order/)
+
+The application uses Quarkus OpenShift extension to create yaml files for OpenShift and deploy the application using source to image capability of OpenShift:
+
+ ```shell
+ source .env
+ ./mvnw clean package -Dui.deps -Dui.dev -Dquarkus.kubernetes.deploy=true -DskipTests
+ ```
+
+The `-Dui.deps -Dui.dev` arguments are used to prepare and build the vue.js app from the `ui` folder. The packaging build a runner jar and push it to the private image registry in OpenShift.
+
+
+It can take some seconds to build and deploy: `oc get pods -w` lets you see the build pods and the running app once the build is done. As we set properties to expose the application, an OpenShift route was created. 
+
+* Be sure to get the Order Microservice URL to access the user interface, using `oc get routes` on the project. Using your web browser, pointing to this address you should get the UI:
+
+ ![](./images/ui-home.png)
+
+
